@@ -128,13 +128,13 @@ class CallForwarder {
    * @returns {Promise<Object>} The Sync document
    */
   getSyncDocument() {
-    return this.client.sync.services(this.syncServiceSid)
+    return this.client.sync.v1.services(this.syncServiceSid)
       .documents(this.syncDocumentName)
       .fetch()
       .catch(err => {
         // If document doesn't exist, create it
         if (err.status === 404) {
-          return this.client.sync.services(this.syncServiceSid)
+          return this.client.sync.v1.services(this.syncServiceSid)
             .documents
             .create({
               uniqueName: this.syncDocumentName,
@@ -151,7 +151,7 @@ class CallForwarder {
    * @returns {Promise<Object>} The updated document
    */
   updateCurrentIndex(index) {
-    return this.client.sync.services(this.syncServiceSid)
+    return this.client.sync.v1.services(this.syncServiceSid)
       .documents(this.syncDocumentName)
       .update({
         data: { currentIndex: index }
@@ -179,7 +179,7 @@ class CallForwarder {
       timeout: this.dialTimeout,
       action: this.context.PATH,
       method: 'POST',
-      callerId: this.event.To // Using the Twilio number as caller ID
+      callerId: this.context.CALLER_ID || '+13212554724' // Using configured caller ID with fallback
     });
 
     dial.number(this.whitelistedNumbers.numbers[safeIndex]);
