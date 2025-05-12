@@ -36,6 +36,7 @@ The following environment variables need to be configured in your Twilio Functio
 
 #### For Call Forwarding
 - `SYNC_SERVICE_SID`: Your Twilio Sync Service SID
+- `CALLER_ID`: Phone number to use as the caller ID for outgoing calls (falls back to +13212554724 if not specified)
 
 #### For Voicemail Email Notifications
 - `SMTP_HOST`: SMTP server hostname
@@ -81,8 +82,10 @@ Create a JSON asset named `phone-numbers.json` with the following structure:
   ]
 }
 ```
+**Important**:
+- You must provide at least one valid phone number in the JSON asset. If no phone numbers are available, callers will receive an error message.
+- Make sure to set the phone-numbers.json asset as **private** in your Twilio assets folder. This is required for the file to be properly read by the system and also protects sensitive phone number information.
 
-**Important**: You must provide at least one valid phone number in the JSON asset. If no phone numbers are available, callers will receive an error message.
 
 ## Deployment
 
