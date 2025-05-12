@@ -116,4 +116,4 @@ You can customize the application by:
 
 ## License
 
-This project is available as open source under the terms of the MIT License.
+This project is available as open source under the terms of the [MIT License](LICENSE).
