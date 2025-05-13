@@ -36,7 +36,7 @@ The following environment variables need to be configured in your Twilio Functio
 
 #### For Call Forwarding
 - `SYNC_SERVICE_SID`: Your Twilio Sync Service SID
-- `CALLER_ID`: Phone number to use as the caller ID for outgoing calls (falls back to +13212554724 if not specified)
+- `CALLER_ID`: Phone number to use as the caller ID for outgoing calls
 
 #### For Voicemail Email Notifications
 - `SMTP_HOST`: SMTP server hostname
