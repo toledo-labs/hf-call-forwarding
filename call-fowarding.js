@@ -179,7 +179,7 @@ class CallForwarder {
       timeout: this.dialTimeout,
       action: this.context.PATH,
       method: 'POST',
-      callerId: this.context.CALLER_ID || '+13212554724' // Using configured caller ID with fallback
+      callerId: this.context.CALLER_ID // Using configured caller ID
     });
 
     dial.number(this.whitelistedNumbers.numbers[safeIndex]);
