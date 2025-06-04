@@ -49,6 +49,7 @@ The following environment variables need to be configured in your Twilio Functio
 
 ### Dependencies
 
+- Node.js v22 or higher
 - Twilio Functions runtime
 - Nodemailer (for email functionality)
 
