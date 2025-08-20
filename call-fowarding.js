@@ -1,204 +1,228 @@
-exports.handler = function(context, event, callback) {
-  const callForwarder = new CallForwarder(context, event, callback);
-  callForwarder.processCall();
+// ------------------------------------------------------------
+// call-forwarding.js built by Toledo1
+// ------------------------------------------------------------
+
+/**
+ * Call Forwarding Function
+ *
+ * 1️⃣ Reads the current round‑robin index from a Sync document.
+ * 2️⃣ Dials the next whitelisted number.  If the call is answered,
+ *    Twilio will POST back to this function (action) with DialCallStatus.
+ * 3️⃣ If all numbers are exhausted, the caller is sent to voicemail.
+ * 4️⃣ The index is persisted for the next inbound call.
+ *
+ * All tunables are supplied via environment variables:
+ *   - DIAL_TIMEOUT                (seconds, default 15)
+ *   - CALLER_ID                   (verified Twilio number)
+ *   - SYNC_SERVICE_SID            (Sync service SID)
+ *   - PHONE_NUMBERS_ASSET         (path to JSON asset, default "/phone-numbers.json")
+ *   - VOICEMAIL_TRANSCRIBE_CALLBACK (endpoint for transcript callbacks)
+ *
+ * The whitelist JSON must have the shape:
+ * {
+ *   "whitelistedNumbers": [
+ *     { "name": "Alice", "number": "+15551234567" },
+ *     { "name": "Bob",   "number": "+15557654321" }
+ *   ]
+ * }
+ *
+ * Numbers are validated against the E.164 format before use.
+ */
+
+exports.handler = async (context, event, callback) => {
+  const forwarder = new CallForwarder({ context, event, callback });
+  await forwarder.processCall(); // function handles its own callback
 };
 
+/* ------------------------------------------------------------------ */
+/* --------------------------- CONFIG -------------------------------- */
+/* ------------------------------------------------------------------ */
+const VOICE_OPTS = { voice: 'Polly.Joanna', language: 'en-US' };
+const PHONE_ASSET_PATH = process.env.PHONE_NUMBERS_ASSET || '/phone-numbers.json';
+const VOICEMAIL_CALLBACK = process.env.VOICEMAIL_TRANSCRIBE_CALLBACK || '/voicemail-callback';
+
+/* ------------------------------------------------------------------ */
+/* --------------------------- CLASS --------------------------------- */
+/* ------------------------------------------------------------------ */
 class CallForwarder {
-  constructor(context, event, callback) {
-    // Context and event data
+  constructor({ context, event, callback }) {
     this.context = context;
     this.event = event;
     this.callback = callback;
+
+    // Twilio objects
     this.client = context.getTwilioClient();
     this.twiml = new Twilio.twiml.VoiceResponse();
-    
-    // Configuration
-    this.dialTimeout = 15;  // Seconds to wait before trying next number
+
+    // Configurable options
+    this.dialTimeout = Number(context.DIAL_TIMEOUT) || 15;
     this.syncServiceSid = context.SYNC_SERVICE_SID || 'default';
     this.syncDocumentName = 'callForwardingState';
-    
-    // Call state
+
+    // Call state helpers
     this.isInitialCall = !event.DialCallStatus;
-    this.isCallComplete = event.DialCallStatus === 'completed' || event.DialCallStatus === 'answered';
-    
-    // Load whitelisted numbers from JSON asset
+    this.isCallComplete = ['completed', 'answered'].includes(event.DialCallStatus);
+
+    // Load and validate whitelist
     this.whitelistedNumbers = this.loadWhitelistedNumbers();
   }
 
-  /**
-   * Load whitelisted numbers from JSON asset
-   * @returns {Object} Object containing numbers and names arrays
-   */
+  /* --------------------------------------------------------------
+   * Load whitelist from a Runtime asset and filter out malformed
+   * E.164 numbers.
+   * ------------------------------------------------------------ */
   loadWhitelistedNumbers() {
     try {
-      // Access the JSON asset
       const assets = Runtime.getAssets();
-      const phoneNumbersAsset = assets['/phone-numbers.json'];
-      
-      if (!phoneNumbersAsset) {
-        console.error('phone-numbers.json asset not found');
-        // Return empty arrays instead of hardcoded fallback
-        return {
-          numbers: [],
-          names: []
-        };
-      }
-      
-      // Parse the JSON content
-      const phoneNumbersJson = JSON.parse(phoneNumbersAsset.open());
-      
-      // Extract numbers and names as separate arrays
+      const asset = assets[PHONE_ASSET_PATH];
+      if (!asset) throw new Error(`Asset ${PHONE_ASSET_PATH} not found`);
+
+      const json = JSON.parse(asset.open());
+      const filtered = (json.whitelistedNumbers || []).filter(
+        ({ number }) => /^\+?[1-9]\d{1,14}$/.test(number)
+      );
+
       return {
-        numbers: phoneNumbersJson.whitelistedNumbers.map(entry => entry.number),
-        names: phoneNumbersJson.whitelistedNumbers.map(entry => entry.name)
+        numbers: filtered.map(entry => entry.number),
+        names: filtered.map(entry => entry.name || '')
       };
     } catch (err) {
-      console.error('Error loading phone numbers:', err);
-      // Return empty arrays instead of hardcoded fallback
-      return {
-        numbers: [],
-        names: []
-      };
+      console.error('Failed to load whitelist:', err);
+      return { numbers: [], names: [] };
     }
   }
 
-  /**
-   * Main method to process the incoming call
-   */
-  processCall() {
-    this.getCurrentIndex()
-      .then(currentIndex => {
-        console.log(`Processing call with currentIndex: ${currentIndex}, isInitialCall: ${this.isInitialCall}, isCallComplete: ${this.isCallComplete}`);
-        
-        // If call is complete, end the program
-        if (this.isCallComplete) {
-          this.twiml.say('Call connected successfully.');
-          return this.callback(null, this.twiml);
-        }
-        
-        // Check if no phone numbers are available
-        if (this.whitelistedNumbers.numbers.length === 0) {
-          console.error('No phone numbers available for forwarding');
-          this.twiml.say('We\'re sorry, but the call forwarding service is currently unavailable. Please try again later.');
-          this.twiml.hangup();
-          return this.callback(null, this.twiml);
-        }
-        
-        // Check if we need to go to voicemail
-        // Only check on forwarded calls, and only if we've tried all numbers
-        if (!this.isInitialCall && currentIndex >= this.whitelistedNumbers.numbers.length) {
-          this.recordVoicemail();
-          return this.callback(null, this.twiml);
-        }
-        else if (this.isInitialCall && currentIndex >= this.whitelistedNumbers.numbers.length) {
-          currentIndex = 0;
-        }
-        
-        // Dial the current number
-        this.dialNumber(currentIndex);
-        
-        // Always update the index for the next attempt
-        const nextIndex = currentIndex + 1;
-        this.updateCurrentIndex(nextIndex)
-          .then(() => {
-            this.callback(null, this.twiml);
-          })
-          .catch(err => {
-            console.error('Error updating current index:', err);
-            this.callback(err);
-          });
-      })
-      .catch(err => {
-        console.error('Error in processCall:', err);
-        this.callback(err);
-      });
+  /* --------------------------------------------------------------
+   * Main entry point – orchestrates the whole flow.
+   * ------------------------------------------------------------ */
+  async processCall() {
+    try {
+      // 1️⃣ Retrieve current index (and its etag for optimistic locking)
+      const { index: currentIndex, etag } = await this.getCurrentIndexAndEtag();
+
+      // 2️⃣ If the previous Dial already succeeded, just thank the caller
+      if (this.isCallComplete) {
+        this.twiml.say('Call connected successfully.', VOICE_OPTS);
+        return this.callback(null, this.twiml);
+      }
+
+      // 3️⃣ Guard against missing whitelist
+      if (!this.whitelistedNumbers.numbers.length) {
+        this.twiml.say(
+          "We're sorry, the call forwarding service is unavailable. Please try again later.",
+          VOICE_OPTS
+        );
+        this.twiml.hangup();
+        return this.callback(null, this.twiml);
+      }
+
+      // 4️⃣ If we've exhausted every number on a forwarded call → voicemail
+      if (!this.isInitialCall && currentIndex >= this.whitelistedNumbers.numbers.length) {
+        this.recordVoicemail();
+        return this.callback(null, this.twiml);
+      }
+
+      // 5️⃣ Normal forwarding path
+      const safeIdx = currentIndex % this.whitelistedNumbers.numbers.length;
+      this.dialNumber(safeIdx);
+
+      // Respond immediately – the caller gets the <Dial> right away
+      this.callback(null, this.twiml);
+
+      // 6️⃣ Persist the next index (fire‑and‑forget, optimistic lock)
+      const nextIdx = currentIndex + 1;
+      await this.updateCurrentIndex(nextIdx, etag);
+    } catch (err) {
+      console.error('Unexpected error in processCall:', err);
+      this.twiml.say('An error occurred. Please try again later.', VOICE_OPTS);
+      this.twiml.hangup();
+      this.callback(null, this.twiml);
+    }
   }
 
-  /**
-   * Retrieve the current index from the Sync service
-   * @returns {Promise<number>} The current index
-   */
-  getCurrentIndex() {
-    return this.getSyncDocument()
-      .then(doc => doc.data.currentIndex);
-  }
-
-  /**
-   * Get or create the Sync document containing our state
-   * @returns {Promise<Object>} The Sync document
-   */
-  getSyncDocument() {
-    return this.client.sync.v1.services(this.syncServiceSid)
+  /* --------------------------------------------------------------
+   * Sync helpers – fetch document (create if missing) and return
+   * both the stored index and the document's etag.
+   * ------------------------------------------------------------ */
+  async getCurrentIndexAndEtag() {
+    const doc = await this.client.sync
+      .v1.services(this.syncServiceSid)
       .documents(this.syncDocumentName)
       .fetch()
-      .catch(err => {
-        // If document doesn't exist, create it
+      .catch(async err => {
         if (err.status === 404) {
-          return this.client.sync.v1.services(this.syncServiceSid)
+          // Document does not exist – create it with index 0
+          const created = await this.client.sync
+            .v1.services(this.syncServiceSid)
             .documents
-            .create({
-              uniqueName: this.syncDocumentName,
-              data: { currentIndex: 0 }
-            });
+            .create({ uniqueName: this.syncDocumentName, data: { currentIndex: 0 } });
+          return created;
         }
         throw err;
       });
+
+    return {
+      index: doc.data?.currentIndex ?? 0,
+      etag: doc.etag
+    };
   }
 
-  /**
-   * Update the current index in the state document
-   * @param {number} index The index to save
-   * @returns {Promise<Object>} The updated document
-   */
-  updateCurrentIndex(index) {
-    return this.client.sync.v1.services(this.syncServiceSid)
-      .documents(this.syncDocumentName)
-      .update({
-        data: { currentIndex: index }
-      });
+  async updateCurrentIndex(newIndex, etag) {
+    try {
+      await this.client.sync
+        .v1.services(this.syncServiceSid)
+        .documents(this.syncDocumentName)
+        .update({ data: { currentIndex: newIndex } }, { ifMatch: etag });
+    } catch (e) {
+      // 412 = Precondition Failed → another instance already updated the doc.
+      if (e.status === 412) {
+        console.warn('Sync index conflict – another function updated the value already.');
+        return;
+      }
+      // Re‑throw any other unexpected error so the caller can log it.
+      throw e;
+    }
   }
 
-  /**
-   * Dial a number from the whitelist
-   * @param {number} index The index to dial
-   */
-  dialNumber(index) {
-    // Ensure index is within bounds
-    const safeIndex = index % this.whitelistedNumbers.numbers.length;
-    
-    // Get the name if available
-    const recipientName = this.whitelistedNumbers.names[safeIndex] || `recipient ${safeIndex + 1}`;
-    
-    // Add a message before dialing (optional)
+  /* --------------------------------------------------------------
+   * Build the <Dial> TwiML for the selected recipient.
+   * ------------------------------------------------------------ */
+  dialNumber(idx) {
+    const name = this.whitelistedNumbers.names[idx] || `recipient ${idx + 1}`;
     this.twiml.say(
-      `Please wait while we connect your call. Trying to reach ${recipientName}.`
+      `Please wait while we connect your call. Trying to reach ${name}.`,
+      VOICE_OPTS
     );
-    
-    // Dial the current number with a timeout
+
     const dial = this.twiml.dial({
       timeout: this.dialTimeout,
-      action: this.context.PATH,
+      action: this.context.PATH, // Twilio will POST back here after <Dial>
       method: 'POST',
-      callerId: this.context.CALLER_ID // Using configured caller ID
+      callerId: this.context.CALLER_ID
     });
 
-    dial.number(this.whitelistedNumbers.numbers[safeIndex]);
+    dial.number(this.whitelistedNumbers.numbers[idx]);
   }
 
-  /**
-   * Record a voicemail when no one answers
-   */
+  /* --------------------------------------------------------------
+   * Voicemail flow – plays prompts, records, and hangs up.
+   * ------------------------------------------------------------ */
   recordVoicemail() {
-    this.twiml.say('No one is available to take your call. Please leave a message after the tone.');
-    
+    this.twiml.say(
+      "We're sorry, but we couldn't reach anyone at this time.",
+      VOICE_OPTS
+    );
+    this.twiml.say(
+      'Please leave your name, message, and contact information after the beep.',
+      VOICE_OPTS
+    );
     this.twiml.record({
       transcribe: true,
-      transcribeCallback: '/voicemail-callback',
+      transcribeCallback: VOICEMAIL_CALLBACK,
       maxLength: 120,
       playBeep: true
     });
-    
-    this.twiml.say('Thank you for your message. Goodbye.');
+    this.twiml.say('Thank you. Goodbye.', VOICE_OPTS);
     this.twiml.hangup();
   }
 }
