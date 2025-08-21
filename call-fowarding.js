@@ -38,8 +38,9 @@ exports.handler = async (context, event, callback) => {
 /* --------------------------- CONFIG -------------------------------- */
 /* ------------------------------------------------------------------ */
 const VOICE_OPTS = { voice: 'Polly.Joanna', language: 'en-US' };
-const PHONE_ASSET_PATH = process.env.PHONE_NUMBERS_ASSET || '/phone-numbers.json';
-const VOICEMAIL_CALLBACK = process.env.VOICEMAIL_TRANSCRIBE_CALLBACK || '/voicemail-callback';
+const PHONE_ASSET_PATH = '/phone-numbers.json';
+const VOICEMAIL_CALLBACK = '/voicemail-callback';
+const SPAM_THRESHOLD = 75; // Block calls with a TrueSpam score >= 75 (High Spam)
 
 /* ------------------------------------------------------------------ */
 /* --------------------------- CLASS --------------------------------- */
@@ -96,6 +97,57 @@ class CallForwarder {
    * Main entry point – orchestrates the whole flow.
    * ------------------------------------------------------------ */
   async processCall() {
+    /* --------------------------------------------------------------
+    * 0️⃣ TrueSpam spam‑check (enhanced safety & logging)
+    * ------------------------------------------------------------ */
+    const addOns = this.event.AddOns;
+
+    // Verify that the Add‑on payload exists and is marked successful
+    if (addOns && addOns.status === 'successful') {
+      // Safe‑navigate to the TrueSpam result object
+      const trueSpam = addOns.results?.truecnam_truespam;
+
+      // Ensure the add‑on itself succeeded and that a result object is present
+      if (trueSpam?.status === 'successful' && trueSpam.result) {
+        // TrueSpam only scores numbers that exist in its database
+        if (trueSpam.result.spam_score_match === 1) {
+          // Coerce the score to a number (in case the API ever returns a string)
+          const rawScore = trueSpam.result.spam_score;
+          const score = Number(rawScore);
+
+          // Log the decision – handy for monitoring / threshold tuning
+          console.log(
+            `TrueSpam check – From: ${this.event.From}, ` +
+            `score: ${score}, threshold: ${SPAM_THRESHOLD}`
+          );
+
+          // Block the call if the score meets or exceeds our threshold
+          if (score >= SPAM_THRESHOLD) {
+            console.warn(
+              `Blocking spam call from ${this.event.From}. TrueSpam score: ${score}`
+            );
+            this.twiml.reject({ reason: 'rejected' });
+            return this.callback(null, this.twiml);
+          }
+        } else {
+          // Number not in TrueSpam DB – just note it for diagnostics
+          console.info(
+            `TrueSpam: No match for ${this.event.From} (spam_score_match = 0)`
+          );
+        }
+      } else {
+        // Unexpected payload – we still want the call to proceed
+        console.warn(
+          'TrueSpam add‑on returned an unexpected payload or failed status:',
+          trueSpam
+        );
+      }
+    }
+    // --------------------------------------------------------------
+    // If we reach this point the call has either passed the spam check
+    // or the add‑on was not available / not successful.
+    // --------------------------------------------------------------
+
     try {
       // 1️⃣ Retrieve current index (and its etag for optimistic locking)
       const { index: currentIndex, etag } = await this.getCurrentIndexAndEtag();
@@ -122,14 +174,14 @@ class CallForwarder {
         return this.callback(null, this.twiml);
       }
 
-      // 5️⃣ Normal forwarding path
+      // 5️⃣ Normal forwarding path – dial the next number in the round‑robin list
       const safeIdx = currentIndex % this.whitelistedNumbers.numbers.length;
       this.dialNumber(safeIdx);
 
-      // Respond immediately – the caller gets the <Dial> right away
+      // Respond immediately – the caller receives the <Dial> without waiting for the index write
       this.callback(null, this.twiml);
 
-      // 6️⃣ Persist the next index (fire‑and‑forget, optimistic lock)
+      // 6️⃣ Persist the next index (fire‑and‑forget, with optimistic lock)
       const nextIdx = currentIndex + 1;
       await this.updateCurrentIndex(nextIdx, etag);
     } catch (err) {
@@ -139,7 +191,7 @@ class CallForwarder {
       this.callback(null, this.twiml);
     }
   }
-
+  
   /* --------------------------------------------------------------
    * Sync helpers – fetch document (create if missing) and return
    * both the stored index and the document's etag.
