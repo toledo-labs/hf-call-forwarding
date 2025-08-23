@@ -176,14 +176,15 @@ class CallForwarder {
 
       // 5️⃣ Normal forwarding path – dial the next number in the round‑robin list
       const safeIdx = currentIndex % this.whitelistedNumbers.numbers.length;
-      this.dialNumber(safeIdx);
 
-      // Respond immediately – the caller receives the <Dial> without waiting for the index write
+      // 6️⃣ Persist the next index with optimistic lock
+      const nextIdx = currentIndex + 1;
+      this.updateCurrentIndex(nextIdx, etag);
+
+      this.dialNumber(safeIdx);
+      // Respond immediately – the caller receives the <Dial>
       this.callback(null, this.twiml);
 
-      // 6️⃣ Persist the next index (fire‑and‑forget, with optimistic lock)
-      const nextIdx = currentIndex + 1;
-      await this.updateCurrentIndex(nextIdx, etag);
     } catch (err) {
       console.error('Unexpected error in processCall:', err);
       this.twiml.say('An error occurred. Please try again later.', VOICE_OPTS);
