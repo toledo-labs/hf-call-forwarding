@@ -149,8 +149,8 @@ class CallForwarder {
     // --------------------------------------------------------------
 
     try {
-      // 1️⃣ Retrieve current index (and its etag for optimistic locking)
-      const { index: currentIndex, etag } = await this.getCurrentIndexAndEtag();
+      // 1️⃣ Retrieve current index
+      const currentIndex = await this.getCurrentIndex();
 
       // 2️⃣ If the previous Dial already succeeded, just thank the caller
       if (this.isCallComplete) {
@@ -177,9 +177,9 @@ class CallForwarder {
       // 5️⃣ Normal forwarding path – dial the next number in the round‑robin list
       const safeIdx = currentIndex % this.whitelistedNumbers.numbers.length;
 
-      // 6️⃣ Persist the next index with optimistic lock
+      // 6️⃣ Persist the next index
       const nextIdx = currentIndex + 1;
-      this.updateCurrentIndex(nextIdx, etag);
+      await this.updateCurrentIndex(nextIdx);
 
       this.dialNumber(safeIdx);
       // Respond immediately – the caller receives the <Dial>
@@ -195,9 +195,9 @@ class CallForwarder {
   
   /* --------------------------------------------------------------
    * Sync helpers – fetch document (create if missing) and return
-   * both the stored index and the document's etag.
+   * the stored index.
    * ------------------------------------------------------------ */
-  async getCurrentIndexAndEtag() {
+  async getCurrentIndex() {
     const doc = await this.client.sync
       .v1.services(this.syncServiceSid)
       .documents(this.syncDocumentName)
@@ -214,26 +214,19 @@ class CallForwarder {
         throw err;
       });
 
-    return {
-      index: doc.data?.currentIndex ?? 0,
-      etag: doc.etag
-    };
+    return doc.data?.currentIndex ?? 0;
   }
 
-  async updateCurrentIndex(newIndex, etag) {
+  async updateCurrentIndex(newIndex) {
     try {
       await this.client.sync
         .v1.services(this.syncServiceSid)
         .documents(this.syncDocumentName)
-        .update({ data: { currentIndex: newIndex } }, { ifMatch: etag });
-    } catch (e) {
-      // 412 = Precondition Failed → another instance already updated the doc.
-      if (e.status === 412) {
-        console.warn('Sync index conflict – another function updated the value already.');
-        return;
-      }
+        .update({ data: { currentIndex: newIndex } });
+    } catch (err) {
       // Re‑throw any other unexpected error so the caller can log it.
-      throw e;
+      console.error('Failed to update sync document:', err);
+      throw err;
     }
   }
 
