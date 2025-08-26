@@ -178,7 +178,7 @@ class CallForwarder {
       const safeIdx = currentIndex % this.whitelistedNumbers.numbers.length;
 
       // 6️⃣ Persist the next index
-      const nextIdx = currentIndex + 1;
+      const nextIdx = safeIdx + 1;
       await this.updateCurrentIndex(nextIdx);
 
       this.dialNumber(safeIdx);
