@@ -1,19 +1,22 @@
 # HF Call Forwarding
 
-A Twilio-based call forwarding application that routes incoming calls to a sequence of phone numbers and captures voicemails when no one is available.
+A Twilio-based call forwarding application that routes incoming calls to a sequence of phone numbers (working as a mobile call center) and captures voicemails when no one is available. This application was built by [Toledo1](https://toledo1.com) a compound AI Browser.
 
 ## Overview
 
 This application provides an intelligent call forwarding solution using Twilio Functions. When a call comes in, the system will:
 
-1. Try to reach a series of predefined phone numbers in sequence
-2. If a person answers, connect the call
-3. If no one answers after trying all numbers, record a voicemail
-4. Email the voicemail recording and transcription to a specified email address
+1. Block high-risk spam calls using the TrueSpam add-on
+2. Try to reach a series of predefined phone numbers in sequence
+3. If a person answers, connect the call
+4. If no one answers after trying all numbers, record a voicemail
+5. Email the voicemail recording and transcription to a specified email address
 
 ## Features
 
 - **Sequential Call Forwarding**: Tries multiple numbers in order until someone answers
+- **Spam Blocking**: Integrates with TrueSpam to block high-risk spam calls
+- **Handles Concurrency**: Handles multiple simultaneous calls or high call volumne
 - **Configurable Timeouts**: Adjustable wait time before trying the next number
 - **Personalized Greeting**: Announces the name of the person being called
 - **Voicemail Recording**: Records messages when no one is available
@@ -29,6 +32,7 @@ This application provides an intelligent call forwarding solution using Twilio F
 - Twilio Account with Functions and Assets enabled
 - Twilio phone number for receiving incoming calls
 - Twilio Sync Service
+- TrueSpam by TrueCNAM Add-on
 
 ### Environment Variables
 
@@ -83,6 +87,16 @@ Create a JSON asset named `phone-numbers.json` with the following structure:
   ]
 }
 ```
+### TrueSpam Add-on Configuration
+
+To enable spam blocking, you need to install and configure the TrueSpam by TrueCNAM add-on from the Twilio Marketplace.
+
+1. Go to the [Twilio Marketplace](https://console.twilio.com/us1/develop/add-ons/catalog)
+2. Search for "TrueSpam by TrueCNAM" and install it
+3. During installation, set the "Unique Name" to `truecnam_truespam` if required
+4. Enable the add-on for "Incoming Voice Call"
+
+This will ensure that the add-on is triggered for every incoming call and the results are available in your Twilio Function.
 **Important**:
 - You must provide at least one valid phone number in the JSON asset. If no phone numbers are available, callers will receive an error message.
 - Make sure to set the phone-numbers.json asset as **private** in your Twilio assets folder. This is required for the file to be properly read by the system and also protects sensitive phone number information.
