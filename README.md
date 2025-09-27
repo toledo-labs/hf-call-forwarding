@@ -6,14 +6,16 @@ A Twilio-based call forwarding application that routes incoming calls to a seque
 
 This application provides an intelligent call forwarding solution using Twilio Functions. When a call comes in, the system will:
 
-1. Block high-risk spam calls using the TrueSpam add-on
-2. Try to reach a series of predefined phone numbers in sequence
-3. If a person answers, connect the call
-4. If no one answers after trying all numbers, record a voicemail
-5. Email the voicemail recording and transcription to a specified email address
+1. Check if the caller is on the blacklist and immediately reject if found
+2. Block high-risk spam calls using the TrueSpam add-on
+3. Try to reach a series of predefined phone numbers in sequence
+4. If a person answers, connect the call
+5. If no one answers after trying all numbers, record a voicemail
+6. Email the voicemail recording and transcription to a specified email address
 
 ## Features
 
+- **Blacklist Protection**: Immediately blocks calls from blacklisted phone numbers
 - **Sequential Call Forwarding**: Tries multiple numbers in order until someone answers
 - **Spam Blocking**: Integrates with TrueSpam to block high-risk spam calls
 - **Handles Concurrency**: Handles multiple simultaneous calls or high call volumne
@@ -62,6 +64,7 @@ The following environment variables need to be configured in your Twilio Functio
 - `call-fowarding.js`: Main call handling function that manages the forwarding logic
 - `voicemail-callback.js`: Processes voicemail recordings and sends email notifications
 - `phone-numbers.json`: Asset file containing the list of forwarding numbers and names
+- `blacklist.json` (optional): Asset file containing phone numbers to block immediately
 
 ## Configuration
 
@@ -87,6 +90,23 @@ Create a JSON asset named `phone-numbers.json` with the following structure:
   ]
 }
 ```
+
+### Blacklist JSON Format (Optional)
+
+Create an optional JSON asset named `blacklist.json` with the following structure to block specific phone numbers:
+
+```json
+{
+  "blacklistedNumbers": [
+    "+12345678901",
+    "+12345678902",
+    "+15551234567"
+  ]
+}
+```
+
+**Note**: The blacklist is optional. If no `blacklist.json` file is provided, no numbers will be blocked by the blacklist (TrueSpam filtering will still apply).
+
 ### TrueSpam Add-on Configuration
 
 To enable spam blocking, you need to install and configure the TrueSpam by TrueCNAM add-on from the Twilio Marketplace.
@@ -107,9 +127,10 @@ This will ensure that the add-on is triggered for every incoming call and the re
 1. Create a new Twilio Function Service
 2. Upload the JavaScript files to the Functions directory
 3. Upload the phone-numbers.json to the Assets directory
-4. Configure the necessary environment variables
-5. Set your Twilio phone number's voice webhook to point to the call-forwarding function
-6. Deploy the service
+4. Optionally upload the blacklist.json to the Assets directory if you want to block specific numbers
+5. Configure the necessary environment variables
+6. Set your Twilio phone number's voice webhook to point to the call-forwarding function
+7. Deploy the service
 
 ## Usage
 

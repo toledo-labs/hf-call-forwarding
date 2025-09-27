@@ -5,6 +5,7 @@
 /**
  * Call Forwarding Function
  *
+ * 🚫 Checks caller against blacklist and immediately rejects if found.
  * 1️⃣ Reads the current round‑robin index from a Sync document.
  * 2️⃣ Dials the next whitelisted number.  If the call is answered,
  *    Twilio will POST back to this function (action) with DialCallStatus.
@@ -26,6 +27,14 @@
  *   ]
  * }
  *
+ * The blacklist JSON must have the shape:
+ * {
+ *   "blacklistedNumbers": [
+ *     "+15551234567",
+ *     "+15557654321"
+ *   ]
+ * }
+ *
  * Numbers are validated against the E.164 format before use.
  */
 
@@ -39,6 +48,7 @@ exports.handler = async (context, event, callback) => {
 /* ------------------------------------------------------------------ */
 const VOICE_OPTS = { voice: 'Polly.Joanna', language: 'en-US' };
 const PHONE_ASSET_PATH = '/phone-numbers.json';
+const BLACKLIST_ASSET_PATH = '/blacklist.json';
 const VOICEMAIL_CALLBACK = '/voicemail-callback';
 const SPAM_THRESHOLD = 75; // Block calls with a TrueSpam score >= 75 (High Spam)
 
@@ -64,8 +74,9 @@ class CallForwarder {
     this.isInitialCall = !event.DialCallStatus;
     this.isCallComplete = ['completed', 'answered'].includes(event.DialCallStatus);
 
-    // Load and validate whitelist
+    // Load and validate whitelist and blacklist
     this.whitelistedNumbers = this.loadWhitelistedNumbers();
+    this.blacklistedNumbers = this.loadBlacklistedNumbers();
   }
 
   /* --------------------------------------------------------------
@@ -94,9 +105,45 @@ class CallForwarder {
   }
 
   /* --------------------------------------------------------------
+   * Load blacklist from a Runtime asset and filter out malformed
+   * E.164 numbers.
+   * ------------------------------------------------------------ */
+  loadBlacklistedNumbers() {
+    try {
+      const assets = Runtime.getAssets();
+      const asset = assets[BLACKLIST_ASSET_PATH];
+      if (!asset) {
+        console.info(`Blacklist asset ${BLACKLIST_ASSET_PATH} not found - no numbers will be blacklisted`);
+        return [];
+      }
+
+      const json = JSON.parse(asset.open());
+      const filtered = (json.blacklistedNumbers || []).filter(
+        (number) => /^\+?[1-9]\d{1,14}$/.test(number)
+      );
+
+      console.info(`Loaded ${filtered.length} blacklisted numbers`);
+      return filtered;
+    } catch (err) {
+      console.error('Failed to load blacklist:', err);
+      return [];
+    }
+  }
+
+  /* --------------------------------------------------------------
    * Main entry point – orchestrates the whole flow.
    * ------------------------------------------------------------ */
   async processCall() {
+    /* --------------------------------------------------------------
+    * 🚫 Blacklist check - Block calls from blacklisted numbers immediately
+    * ------------------------------------------------------------ */
+    const callerNumber = this.event.From;
+    if (this.blacklistedNumbers.includes(callerNumber)) {
+      console.warn(`Blocking call from blacklisted number: ${callerNumber}`);
+      this.twiml.reject({ reason: 'rejected' });
+      return this.callback(null, this.twiml);
+    }
+
     /* --------------------------------------------------------------
     * 0️⃣ TrueSpam spam‑check (enhanced safety & logging)
     * ------------------------------------------------------------ */
