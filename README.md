@@ -1,6 +1,6 @@
 # HF Call Forwarding
 
-A Twilio-based call forwarding application that routes incoming calls to a sequence of phone numbers (working as a mobile call center) and captures voicemails when no one is available. This application was built by [Toledo1](https://toledo1.com) a compound AI Browser.
+A Twilio-based call forwarding application that routes incoming calls to a sequence of phone numbers (working as a mobile call center) and captures voicemails when no one is available. This application was built by [Toledo1](https://github.com/toledo-labs/toledo1) a compound AI Browser.
 
 ## Overview
 
